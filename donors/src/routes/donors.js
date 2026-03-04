@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { importDonors, getDonors } = require('../services/donors');
+const { importDonors, getDonors,addDonorRecord } = require('../services/donors');
 
 const router = express.Router();
 
@@ -31,6 +31,10 @@ const upload = multer({
 // Requires: x-admin-key header
 // Body: form-data, field "file" = CSV
 // ──────────────────────────────────────────────
+
+
+
+
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -69,6 +73,26 @@ router.get('/:candidateId', async (req, res) => {
     return res.status(200).json(data);
   } catch (err) {
     console.error('GET /donors/:candidateId error:', err);
+    return res.status(500).json({ error: 'Internal server error', detail: err.message });
+  }
+});
+
+
+
+
+
+
+router.post('/record', async (req, res) => {
+  try {
+    const result = await addDonorRecord(req.body);
+
+    if (!result.success) {
+      return res.status(422).json(result);
+    }
+
+    return res.status(201).json(result);
+  } catch (err) {
+    console.error('POST /donors/record error:', err);
     return res.status(500).json({ error: 'Internal server error', detail: err.message });
   }
 });

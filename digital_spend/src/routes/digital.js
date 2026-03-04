@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { importDigitalSpend, getDigitalSpend } = require('../services/digitalSpend');
+const { importDigitalSpend, getDigitalSpend,addDigitalSpendRecord } = require('../services/digitalSpend');
 
 const router = express.Router();
 
@@ -55,6 +55,23 @@ router.post('/import', upload.single('file'), async (req, res) => {
 // Returns aggregated digital spend for a candidate
 // Public — no auth required
 // ──────────────────────────────────────────────
+
+router.post('/record', async (req, res) => {
+  try {
+    const result = await addDigitalSpendRecord(req.body);
+
+    if (!result.success) {
+      return res.status(422).json(result);
+    }
+
+    return res.status(201).json(result);
+  } catch (err) {
+    console.error('POST /digital/record error:', err);
+    return res.status(500).json({ error: 'Internal server error', detail: err.message });
+  }
+});
+
+
 router.get('/:candidateId', async (req, res) => {
   try {
     const { candidateId } = req.params;

@@ -1,0 +1,25 @@
+# Node.js
+node_modules/
+.env
+.env.*        # Optional: dev/prod/test env variants
+npm-debug.log
+./postgres_data/
+
+# Logs
+# logs/
+# *.log
+
+# Sequelize CLI (if used)
+# migrations/
+# seeders/
+
+# IDEs/editors
+.vscode/
+*.swp
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Local DB volume
+# Database/
