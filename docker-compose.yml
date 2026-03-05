@@ -1,27 +1,6 @@
-# rafceversion: '3.9'
-
-# ──────────────────────────────────────────────
-# VoteTrace360 — Docker Compose
-#
-# Services:
-#   reconciliation  → port 3004 (start first — others depend on it)
-#   digital-spend   → port 3002
-#   donor           → port 3003
-#   simulator       → no port (fires HTTP to other services)
-#
-# Usage:
-#   cp .env.example .env   # fill in Supabase credentials
-#   docker compose up --build
-#
-# To run without simulator (clean start):
-#   docker compose up --build reconciliation digital-spend donor
-# ──────────────────────────────────────────────
 
 services:
-
-  # ── Reconciliation Engine ──
-  # Must start before digital-spend and donor
-  # so their reconciliation triggers don't fail on boot
+ 
 
   nginx:
     image: nginx:alpine
@@ -115,9 +94,7 @@ services:
     networks:
       - votetrace_network
 
-  # ── Demo Simulator ──
-  # Fires random digital spend and donor records to simulate live data
-  # Comment this out during judging if you want a stable snapshot
+
 
   simulator:
     build:
