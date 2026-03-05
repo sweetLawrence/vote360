@@ -1,1 +1,141 @@
-# rafce
+# rafceversion: '3.9'
+
+# ──────────────────────────────────────────────
+# VoteTrace360 — Docker Compose
+#
+# Services:
+#   reconciliation  → port 3004 (start first — others depend on it)
+#   digital-spend   → port 3002
+#   donor           → port 3003
+#   simulator       → no port (fires HTTP to other services)
+#
+# Usage:
+#   cp .env.example .env   # fill in Supabase credentials
+#   docker compose up --build
+#
+# To run without simulator (clean start):
+#   docker compose up --build reconciliation digital-spend donor
+# ──────────────────────────────────────────────
+
+services:
+
+  # ── Reconciliation Engine ──
+  # Must start before digital-spend and donor
+  # so their reconciliation triggers don't fail on boot
+
+  nginx:
+    image: nginx:alpine
+    container_name: votetrace_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    #   - "443:443"
+    volumes:
+      - ./Nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    #   - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      reconciliation:
+        condition: service_healthy
+      digital-spend:
+        condition: service_healthy
+      donor:
+        condition: service_healthy
+    networks:
+      - votetrace_network
+
+  reconciliation:
+    build:
+      context: ./reconciliation_engine-service
+    container_name: votetrace_reconciliation
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      PORT: 3004
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      INTERNAL_KEY: ${INTERNAL_KEY}
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:3004/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - votetrace_network
+
+  # ── Digital Spend Service ──
+  digital-spend:
+    build:
+      context: ./digital_spend-service
+    container_name: votetrace_digital
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      ADMIN_KEY: ${ADMIN_KEY}
+      RECONCILIATION_URL: http://reconciliation:3004/internal/reconcile
+      INTERNAL_KEY: ${INTERNAL_KEY}
+    depends_on:
+      reconciliation:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:3002/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - votetrace_network
+
+  # ── Donor & Risk Service ──
+  donor:
+    build:
+      context: ./donor-service
+    container_name: votetrace_donor
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      PORT: 3003
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      ADMIN_KEY: ${ADMIN_KEY}
+      RECONCILIATION_URL: http://reconciliation:3004/internal/reconcile
+      INTERNAL_KEY: ${INTERNAL_KEY}
+    depends_on:
+      reconciliation:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:3003/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - votetrace_network
+
+  # ── Demo Simulator ──
+  # Fires random digital spend and donor records to simulate live data
+  # Comment this out during judging if you want a stable snapshot
+
+  simulator:
+    build:
+      context: ./simulator-service
+    container_name: votetrace_simulator
+    restart: unless-stopped
+    environment:
+      DIGITAL_SERVICE_URL: http://digital-spend:3002
+      DONOR_SERVICE_URL: http://donor:3003
+      ADMIN_KEY: ${ADMIN_KEY}
+    depends_on:
+      digital-spend:
+        condition: service_healthy
+      donor:
+        condition: service_healthy
+    networks:
+      - votetrace_network
+
+networks:
+  votetrace_network:
+    driver: bridge
