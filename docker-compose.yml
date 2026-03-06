@@ -143,9 +143,7 @@ services:
     networks:
       - votetrace_network
 
-  # ── Demo Simulator ──
-  # Fires random digital spend and donor records to simulate live data
-  # Comment this out during judging if you want a stable snapshot
+
 
   simulator:
     build:
