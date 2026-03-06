@@ -4,6 +4,8 @@
 
 # environment
 .env
+.env.*
+
 
 # logs
 logs

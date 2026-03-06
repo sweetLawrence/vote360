@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { importDonors, getDonors,addDonorRecord } = require('../services/donors');
+const { importDonors, getDonors,addDonorRecord ,getAllDonors} = require('../services/donors');
 
 const router = express.Router();
 
@@ -55,6 +55,17 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     return res.status(500).json({ error: 'Internal server error', detail: err.message });
   }
 });
+
+router.get('/total', async (req, res) => {
+  try {
+    const data = await getAllDonors();
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error('GET /donors error:', err);
+    return res.status(500).json({ error: 'Internal server error', detail: err.message });
+  }
+});
+
 
 // ──────────────────────────────────────────────
 // GET /api/v1/donors/:candidateId

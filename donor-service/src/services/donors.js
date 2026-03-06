@@ -599,6 +599,32 @@ async function getDonors(candidateId) {
 }
 
 
+// Get all donors
+async function getAllDonors() {
+  const { data, error } = await supabase
+    .from('donors')
+    .select('*')
+    .order('donation_amount', { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  const total = data?.length ?? 0;
+  const totalAmount = (data || []).reduce((sum, d) => sum + Number(d.donation_amount), 0);
+  const high = (data || []).filter(d => d.risk_score === 'HIGH').length;
+  const medium = (data || []).filter(d => d.risk_score === 'MEDIUM').length;
+  const low = (data || []).filter(d => d.risk_score === 'LOW').length;
+
+  return {
+    total_donors: total,
+    total_amount: totalAmount,
+    risk_summary: { high, medium, low },
+    donors: data || [],
+  };
+}
+
+
+
+
 
 // ── Add a single donor record ──
 // Called by POST /api/v1/donors/record
@@ -688,4 +714,5 @@ async function addDonorRecord(body) {
   };
 }
 
-module.exports = { importDonors, getDonors, addDonorRecord };
+// module.exports = { importDonors, getDonors, addDonorRecord };
+module.exports = { importDonors, getDonors, addDonorRecord, getAllDonors };
