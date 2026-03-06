@@ -162,6 +162,28 @@ services:
     networks:
       - votetrace_network
 
+  # BOT - (TEST)
+
+  telegram-bot:
+    build:
+      context: ./telegram-bot         # path to the bot project folder
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"            # health-check / liveness probe
+    environment:
+      - NODE_ENV=production
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - API_BASE_URL=${API_BASE_URL}
+      - BOT_SECRET=${BOT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    # env_file:
+      # - .env            # or just .env at root if you centralise secrets
+    # depends_on:
+    #   - your-api-service 
+    networks:
+      - votetrace_network
+
 networks:
   votetrace_network:
     driver: bridge
