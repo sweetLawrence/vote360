@@ -15,6 +15,10 @@ export interface UploadAssetParams {
   location?: string;
   /** Telegram user ID as string */
   uploaded_by: string;
+  /** AI-estimated cost in KES — overrides the backend COST_TABLE if provided. */
+  estimated_cost?: number;
+  /** For rallies: when did the event take place. */
+  event_date?: string;
 }
 
 export interface UploadResult {
@@ -93,6 +97,12 @@ export class PhysicalAssetsService {
     form.append('asset_type', params.asset_type);
     if (params.location) {
       form.append('location', params.location);
+    }
+    if (params.estimated_cost !== undefined) {
+      form.append('estimated_cost', String(params.estimated_cost));
+    }
+    if (params.event_date) {
+      form.append('event_date', params.event_date);
     }
     form.append('source', 'telegram');
     form.append('uploaded_by', params.uploaded_by);

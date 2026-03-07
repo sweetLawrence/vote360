@@ -104,8 +104,11 @@ export class PhysicalAssetsService {
     }
 
     // 5. Determine region from location string → look up estimated_cost
+    //    If the bot already ran AI cost estimation, use that value directly.
     const region: Region = deriveRegion(body.location?.trim());
-    const estimatedCost = getEstimatedCost(assetType, region);
+    const estimatedCost = body.estimated_cost
+      ? Math.round(Number(body.estimated_cost))
+      : getEstimatedCost(assetType, region);
 
     this.logger.log(
       `Asset: ${assetType}, region: ${region}, cost: KES ${estimatedCost.toLocaleString()}, candidate: ${candidate.name}`,

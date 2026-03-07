@@ -9,4 +9,8 @@ export class UploadAssetDto {
   // Sent as strings from multipart form-data
   location_lat?: string;
   location_lng?: string;
+  /** AI-estimated cost override from the bot. If provided, skips COST_TABLE lookup. */
+  estimated_cost?: string;
+  /** For rallies: approximate date/time of the event. */
+  event_date?: string;
 }

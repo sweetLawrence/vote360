@@ -3,9 +3,12 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 export type ConversationStep =
   | 'awaiting_asset_type'
   | 'awaiting_candidate'
-  | 'awaiting_constituency'    // candidate name not found — user picking constituency
+  | 'awaiting_constituency'      // candidate name not found — user picking constituency
   | 'awaiting_location'
-  | 'awaiting_more';           // submission done — asking if user has more photos
+  | 'awaiting_event_date'        // rally only: when did it happen?
+  | 'awaiting_crowd_size'        // rally only: AI couldn't see crowd clearly, asks user
+  | 'awaiting_billboard_details' // billboard only: AI asks for size clarification
+  | 'awaiting_more';             // submission done — asking if user has more photos
 
 export interface CandidateInfo {
   id: number;
@@ -35,6 +38,10 @@ export interface SessionData {
   /** Full candidate list fetched during disambiguation — filtered client-side by constituency. */
   allCandidates?: CandidateInfo[];
   location?: string;
+  /** For rallies: date/time the event took place. */
+  eventDate?: string;
+  /** Clarifying answer from user (crowd size hint or billboard size hint). */
+  clarifyingAnswer?: string;
   /** Completed reports this session — persists across multi-photo flow. */
   sessionReports: SessionReport[];
   /** Updated on every write — used as last-activity timestamp for TTL. */
@@ -67,16 +74,11 @@ export class SessionStore implements OnModuleInit, OnModuleDestroy {
     return session;
   }
 
-  /**
-   * Create or update a session.
-   * `startedAt` is always refreshed so the TTL resets on each interaction.
-   * Spread the existing session into `data` to preserve earlier fields.
-   */
   set(chatId: number, data: Partial<SessionData> & { step: ConversationStep }): void {
     this.sessions.set(chatId, {
-      sessionReports: [],     // default — caller can override by spreading existing session
+      sessionReports: [],
       ...data,
-      startedAt: Date.now(), // always last-write wins — keeps TTL alive
+      startedAt: Date.now(),
     } as SessionData);
   }
 

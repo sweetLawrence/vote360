@@ -32,49 +32,19 @@ const WELCOME_MESSAGE = `🇰🇪 Welcome to Vote-Trace Kenya!
 Uko na evidence ya campaign spending? Billboards, rallies, choppers, convoys — snap a photo na utusaidie ku-track where the money is going.
 
 🔍 How it works:
-Send us a photo of any campaign asset you spot. We'll ask you a few quick questions — no forms, no stress.
+Send us a photo of any campaign asset you spot. We'll ask a few quick questions to help us estimate the real cost accurately.
 
 📸 Ready? Send a photo to get started!
 
 Your report stays anonymous. Together, tunaweza demand transparency. ✊`;
 
-// ─── Cost display helpers ──────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatKES(amount: number): string {
   if (amount >= 1_000_000) return `KES ${(amount / 1_000_000).toFixed(1)}M`;
   if (amount >= 1_000)     return `KES ${(amount / 1_000).toFixed(0)}K`;
   return `KES ${amount.toLocaleString()}`;
 }
-
-const COST_FACTS: Record<string, string[]> = {
-  billboard: [
-    'Billboard moja inaweza kukuwa bei ya gari nzuri! 🚗',
-    'Watu wengi hawajui billboard inakuwa na bei kubwa sana!',
-    'Campaign billboards — si rahisi, si cheap!',
-  ],
-  rally:     [
-    'Rally moja inaweza kulisha familia elfu nyingi! 🍽️',
-    'Maandamano ya siasa si bure — kuna pesa nyingi hapo!',
-    'Think about it — rally moja, bei ya hospitali nzima! 🏥',
-  ],
-  chopper:   [
-    'Chopper moja inaweza kujenga shule mbili! 🏫',
-    'Kukimbia kwa ndege — hii si mchezo wa watoto! ✈️',
-    'Kila safari ya chopper, pesa nyingi zinaenda hewani! 💨',
-  ],
-  convoy:    [
-    'Msafara wa magari — petrol peke yake inakuwa bei kubwa! ⛽',
-    'Convoy hii haitembei bure — kila kilomita ina bei! 🚗',
-    'Magari mengi, pesa nyingi — transparency inahitajika! 💰',
-  ],
-};
-
-function randomCostFact(assetType: string): string {
-  const facts = COST_FACTS[assetType] ?? ['Campaign assets si bure!'];
-  return facts[Math.floor(Math.random() * facts.length)];
-}
-
-// ─── Candidate / constituency helpers ─────────────────────────────────────────
 
 function matchCandidates(candidates: CandidateInfo[], search: string): CandidateInfo[] {
   const s = search.toLowerCase().trim();
@@ -103,12 +73,8 @@ function candidateKeyboard(candidates: CandidateInfo[]) {
   );
 }
 
-// ─── Session summary builder ──────────────────────────────────────────────────
-
 function buildSummary(reports: SessionReport[]): string {
-  if (reports.length === 0) {
-    return 'Haujareport chochote bado. Tuma photo kuanza! 📸';
-  }
+  if (reports.length === 0) return 'Haujareport chochote bado. Tuma photo kuanza! 📸';
 
   const total = reports.reduce((sum, r) => sum + r.estimatedCost, 0);
   const lines = reports.map((r, i) => {
@@ -158,29 +124,23 @@ export class TelegramUpdate {
   @Command('summary')
   async onSummary(@Ctx() ctx: Context) {
     const session = this.sessionStore.get(ctx.chat!.id);
-    const reports = session?.sessionReports ?? [];
-    await ctx.reply(buildSummary(reports));
+    await ctx.reply(buildSummary(session?.sessionReports ?? []));
   }
 
-  // ── Photo received → start (or continue) the flow ──────────────────────────
+  // ── Photo received ───────────────────────────────────────────────────────────
   @On('photo')
   async onPhoto(@Ctx() ctx: Context) {
     if (!ctx.message || !('photo' in ctx.message)) return;
 
     const message = ctx.message as Message.PhotoMessage;
     const chatId = ctx.chat!.id;
-
     const photoFileId = message.photo[message.photo.length - 1].file_id;
 
-    // Preserve sessionReports from the current session if it exists (multi-photo)
+    // Preserve sessionReports across multi-photo flow
     const existing = this.sessionStore.get(chatId);
     const sessionReports = existing?.sessionReports ?? [];
 
-    this.sessionStore.set(chatId, {
-      step: 'awaiting_asset_type',
-      photoFileId,
-      sessionReports,
-    });
+    this.sessionStore.set(chatId, { step: 'awaiting_asset_type', photoFileId, sessionReports });
 
     const prompt = sessionReports.length > 0
       ? `Nice 📸! Asset #${sessionReports.length + 1} — What did you spot?`
@@ -189,7 +149,7 @@ export class TelegramUpdate {
     await ctx.reply(prompt, ASSET_KEYBOARD);
   }
 
-  // ── Inline keyboard: asset type ──────────────────────────────────────────────
+  // ── Asset type selected ──────────────────────────────────────────────────────
   @Action(/^asset_/)
   async onAssetType(@Ctx() ctx: Context) {
     const chatId = ctx.chat!.id;
@@ -213,7 +173,7 @@ export class TelegramUpdate {
     await ctx.reply("Which candidate's campaign is this for?");
   }
 
-  // ── Inline keyboard: constituency ───────────────────────────────────────────
+  // ── Constituency selected ────────────────────────────────────────────────────
   @Action(/^const_/)
   async onConstituency(@Ctx() ctx: Context) {
     const chatId = ctx.chat!.id;
@@ -226,14 +186,13 @@ export class TelegramUpdate {
 
     await ctx.answerCbQuery();
 
-    const cbData = (ctx.callbackQuery as { data?: string })?.data ?? '';
-    const constituency = cbData.replace('const_', '');
+    const constituency = ((ctx.callbackQuery as { data?: string })?.data ?? '').replace('const_', '');
     const inConstituency = (session.allCandidates ?? []).filter((c) => c.constituency === constituency);
 
-    try { await ctx.editMessageText(`Constituency: ${constituency} ✓`); } catch { /* stale msg */ }
+    try { await ctx.editMessageText(`Constituency: ${constituency} ✓`); } catch { /* stale */ }
 
     if (inConstituency.length === 0) {
-      await ctx.reply(`Couldn't find candidates in ${constituency}. Please send a new photo to try again. 📸`);
+      await ctx.reply(`Couldn't find candidates in ${constituency}. Send a new photo to try again. 📸`);
       this.sessionStore.delete(chatId);
       return;
     }
@@ -241,7 +200,7 @@ export class TelegramUpdate {
     await ctx.reply(`Who is the candidate in ${constituency}?`, candidateKeyboard(inConstituency));
   }
 
-  // ── Inline keyboard: candidate confirmed ──────────────────────────────────────
+  // ── Candidate confirmed ──────────────────────────────────────────────────────
   @Action(/^cand_/)
   async onCandidateSelect(@Ctx() ctx: Context) {
     const chatId = ctx.chat!.id;
@@ -254,51 +213,43 @@ export class TelegramUpdate {
 
     await ctx.answerCbQuery();
 
-    const cbData = (ctx.callbackQuery as { data?: string })?.data ?? '';
-    const candidateId = Number(cbData.replace('cand_', ''));
+    const candidateId = Number(((ctx.callbackQuery as { data?: string })?.data ?? '').replace('cand_', ''));
     const candidate = (session.allCandidates ?? []).find((c) => c.id === candidateId);
 
     if (!candidate) {
-      await ctx.reply('Could not find that candidate. Please send a new photo to start again. 📸');
+      await ctx.reply('Could not find that candidate. Send a new photo to start again. 📸');
       this.sessionStore.delete(chatId);
       return;
     }
 
-    this.sessionStore.set(chatId, {
-      ...session,
-      step: 'awaiting_location',
-      confirmedCandidateName: candidate.name,
-    });
+    this.sessionStore.set(chatId, { ...session, step: 'awaiting_location', confirmedCandidateName: candidate.name });
 
-    try { await ctx.editMessageText(`Candidate: ${candidate.name} ✓`); } catch { /* stale msg */ }
+    try { await ctx.editMessageText(`Candidate: ${candidate.name} ✓`); } catch { /* stale */ }
 
     await ctx.reply('📍 Where was this? Share your location or type the area name.');
   }
 
-  // ── Inline keyboard: more photos yes/no ──────────────────────────────────────
+  // ── More photos yes/no ───────────────────────────────────────────────────────
   @Action(/^more_/)
   async onMorePhotos(@Ctx() ctx: Context) {
     const chatId = ctx.chat!.id;
     const session = this.sessionStore.get(chatId);
+    const cbData = (ctx.callbackQuery as { data?: string })?.data ?? '';
 
     await ctx.answerCbQuery();
 
-    const cbData = (ctx.callbackQuery as { data?: string })?.data ?? '';
-
     if (cbData === 'more_yes') {
-      try { await ctx.editMessageText('Sawa, tuma photo nyingine! 📸'); } catch { /* stale msg */ }
-      // Session stays alive with sessionReports preserved; @On('photo') handles the next photo
+      try { await ctx.editMessageText('Sawa, tuma photo nyingine! 📸'); } catch { /* stale */ }
       await ctx.reply('📸 Piga photo na uitume hapa. Tunasubiri!');
     } else {
-      // more_no — show full summary and end session
       const reports = session?.sessionReports ?? [];
-      try { await ctx.editMessageText('Sawa, tunamaliza! ✅'); } catch { /* stale msg */ }
+      try { await ctx.editMessageText('Sawa, tunamaliza! ✅'); } catch { /* stale */ }
       await ctx.reply(buildSummary(reports));
       this.sessionStore.delete(chatId);
     }
   }
 
-  // ── Text messages ─────────────────────────────────────────────────────────────
+  // ── Text messages ────────────────────────────────────────────────────────────
   @On('text')
   async onText(@Ctx() ctx: Context) {
     if (!ctx.message || !('text' in ctx.message)) return;
@@ -315,12 +266,11 @@ export class TelegramUpdate {
       return;
     }
 
-    // ── Candidate name step ────────────────────────────────────────────────
+    // ── Candidate name ─────────────────────────────────────────────────────
     if (session.step === 'awaiting_candidate') {
       const allCandidates = await this.physicalAssetsService.listCandidates();
 
       if (allCandidates.length === 0) {
-        this.logger.warn('Candidate list unavailable — falling back to raw name submission');
         this.sessionStore.set(chatId, { ...session, step: 'awaiting_location', confirmedCandidateName: text });
         await ctx.reply('📍 Where was this? Share your location or type the area name.');
         return;
@@ -349,34 +299,106 @@ export class TelegramUpdate {
       return;
     }
 
-    // ── Location step ────────────────────────────────────────────────────
+    // ── Location ───────────────────────────────────────────────────────────
     if (session.step === 'awaiting_location') {
+      const assetType = session.assetType ?? '';
+
+      // After location, ask asset-specific clarifying question before submitting
+      if (assetType === 'rally') {
+        this.sessionStore.set(chatId, { ...session, step: 'awaiting_event_date', location: text });
+        await ctx.reply(
+          `📅 Lini ilifanyika hiyo rally?\n(e.g., "jana", "last Saturday", "March 5") — au andika "skip" tuendelee.`,
+        );
+      } else if (assetType === 'billboard') {
+        this.sessionStore.set(chatId, { ...session, step: 'awaiting_billboard_details', location: text });
+        await ctx.reply(
+          `📐 Ni billboard ya aina gani? Help us estimate accurately:\n\n` +
+          `• "small" — roadside, less than 3m wide\n` +
+          `• "medium" — main road, 3–6m wide\n` +
+          `• "large" — major junction, 6–12m wide\n` +
+          `• "mega" — building wrap or elevated highway\n` +
+          `• "digital" — LED/digital screen\n` +
+          `• "skip" — let AI decide from the photo`,
+        );
+      } else {
+        // Convoy and chopper — AI can estimate directly from the image, submit now
+        await this.submitReport(ctx, {
+          chatId,
+          photoFileId: session.photoFileId!,
+          assetType,
+          candidateName: session.confirmedCandidateName ?? session.candidateName!,
+          location: text,
+        });
+      }
+      return;
+    }
+
+    // ── Rally: event date ──────────────────────────────────────────────────
+    if (session.step === 'awaiting_event_date') {
+      const eventDate = text.toLowerCase() === 'skip' ? undefined : text;
+
+      // Now ask for crowd estimate if not 'skip'
+      this.sessionStore.set(chatId, {
+        ...session,
+        step: 'awaiting_crowd_size',
+        eventDate,
+      });
+
+      await ctx.reply(
+        `👥 Watu wangapi takriban walikuwa kwenye rally?\n\n` +
+        `• "small" — chini ya 500\n` +
+        `• "medium" — 500 hadi 2,000\n` +
+        `• "large" — 2,000 hadi 10,000\n` +
+        `• "mega" — zaidi ya 10,000\n` +
+        `• "skip" — let AI estimate from the photo`,
+      );
+      return;
+    }
+
+    // ── Rally: crowd size ──────────────────────────────────────────────────
+    if (session.step === 'awaiting_crowd_size') {
+      const crowdHint = text.toLowerCase() === 'skip' ? undefined : text;
       await this.submitReport(ctx, {
         chatId,
         photoFileId: session.photoFileId!,
         assetType: session.assetType!,
         candidateName: session.confirmedCandidateName ?? session.candidateName!,
-        location: text,
+        location: session.location!,
+        eventDate: session.eventDate,
+        clarifyingAnswer: crowdHint,
       });
       return;
     }
 
+    // ── Billboard: size clarification ──────────────────────────────────────
+    if (session.step === 'awaiting_billboard_details') {
+      const sizeHint = text.toLowerCase() === 'skip' ? undefined : text;
+      await this.submitReport(ctx, {
+        chatId,
+        photoFileId: session.photoFileId!,
+        assetType: session.assetType!,
+        candidateName: session.confirmedCandidateName ?? session.candidateName!,
+        location: session.location!,
+        clarifyingAnswer: sizeHint,
+      });
+      return;
+    }
+
+    // ── Guard: steps that use inline keyboards ─────────────────────────────
     if (session.step === 'awaiting_constituency') {
       await ctx.reply('Please use the buttons above to select the constituency and candidate. 👆');
       return;
     }
-
     if (session.step === 'awaiting_asset_type') {
       await ctx.reply('Please use the buttons above to select the asset type. 👆');
       return;
     }
-
     if (session.step === 'awaiting_more') {
       await ctx.reply('Use the buttons above to report another photo or finish. 👆');
     }
   }
 
-  // ── Telegram native location share ────────────────────────────────────────────
+  // ── Native Telegram location share ──────────────────────────────────────────
   @On('location')
   async onLocation(@Ctx() ctx: Context) {
     if (!ctx.message || !('location' in ctx.message)) return;
@@ -389,16 +411,30 @@ export class TelegramUpdate {
     const { latitude, longitude } = (ctx.message as Message.LocationMessage).location;
     const locationStr = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
 
-    await this.submitReport(ctx, {
-      chatId,
-      photoFileId: session.photoFileId!,
-      assetType: session.assetType!,
-      candidateName: session.confirmedCandidateName ?? session.candidateName!,
-      location: locationStr,
-    });
+    const assetType = session.assetType ?? '';
+
+    if (assetType === 'rally') {
+      this.sessionStore.set(chatId, { ...session, step: 'awaiting_event_date', location: locationStr });
+      await ctx.reply(
+        `📅 Lini ilifanyika hiyo rally? (e.g., "jana", "last Saturday") — au andika "skip" tuendelee.`,
+      );
+    } else if (assetType === 'billboard') {
+      this.sessionStore.set(chatId, { ...session, step: 'awaiting_billboard_details', location: locationStr });
+      await ctx.reply(
+        `📐 Billboard size? ("small", "medium", "large", "mega", "digital", or "skip")`,
+      );
+    } else {
+      await this.submitReport(ctx, {
+        chatId,
+        photoFileId: session.photoFileId!,
+        assetType,
+        candidateName: session.confirmedCandidateName ?? session.candidateName!,
+        location: locationStr,
+      });
+    }
   }
 
-  // ── Private: download photo, POST to API, show AI analysis, ask for more ──────
+  // ── Private: AI analysis → upload → reply ────────────────────────────────────
   private async submitReport(
     ctx: Context,
     data: {
@@ -407,12 +443,15 @@ export class TelegramUpdate {
       assetType: string;
       candidateName: string;
       location?: string;
+      eventDate?: string;
+      clarifyingAnswer?: string;
     },
   ): Promise<void> {
-    const { chatId, photoFileId, assetType, candidateName, location } = data;
+    const { chatId, photoFileId, assetType, candidateName, location, eventDate, clarifyingAnswer } = data;
     const userId = ctx.from!.id.toString();
+    const locationDisplay = location ?? 'unknown location';
 
-    await ctx.reply('⏳ Inaprocess... tungoja kidogo.');
+    await ctx.reply('⏳ Inaanalyze photo na ku-estimate cost... tungoja kidogo.');
 
     // 1. Download photo
     let imageBuffer: Buffer;
@@ -422,11 +461,32 @@ export class TelegramUpdate {
     } catch (err) {
       this.logger.error(`Photo download failed for user ${userId}`, err);
       this.sessionStore.delete(chatId);
-      await ctx.reply('⚠️ Something went wrong submitting your report. Jaribu tena by sending the photo again.');
+      await ctx.reply('⚠️ Something went wrong. Jaribu tena by sending the photo again.');
       return;
     }
 
-    // 2. Upload to backend
+    // 2. AI cost estimation — runs BEFORE upload so we can send the cost to the backend
+    //    Build a richer location string that includes clarifying answers
+    let enrichedLocation = locationDisplay;
+    if (clarifyingAnswer) {
+      enrichedLocation = assetType === 'rally'
+        ? `${locationDisplay} (crowd: ~${clarifyingAnswer})`
+        : `${locationDisplay} (size: ${clarifyingAnswer})`;
+    }
+
+    // Derive region client-side for the AI prompt (backend will re-derive for storage)
+    const region = deriveRegionHint(locationDisplay);
+
+    const aiResult = await this.aiService.analyzeAsset(
+      imageBuffer,
+      assetType,
+      candidateName,
+      enrichedLocation,
+      region,
+      eventDate,
+    );
+
+    // 3. Upload to backend, passing AI cost as override
     let uploadResult: { estimated_cost: number; region: string; prior_count: number };
     try {
       uploadResult = await this.physicalAssetsService.uploadAsset({
@@ -434,59 +494,72 @@ export class TelegramUpdate {
         filename: `telegram_${userId}_${Date.now()}.jpg`,
         candidate_name: candidateName,
         asset_type: assetType as AssetType,
-        location,
+        location: locationDisplay,
         uploaded_by: userId,
+        estimated_cost: aiResult?.estimated_cost,
+        event_date: eventDate,
       });
     } catch (err) {
       this.logger.error(`Upload failed for user ${userId}`, err);
       this.sessionStore.delete(chatId);
-      await ctx.reply('⚠️ Something went wrong submitting your report. Jaribu tena by sending the photo again.');
+      await ctx.reply('⚠️ Something went wrong. Jaribu tena by sending the photo again.');
       return;
     }
 
-    const { estimated_cost, region, prior_count } = uploadResult;
+    const { estimated_cost, region: storedRegion, prior_count } = uploadResult;
     const assetDisplay = ASSET_DISPLAY[assetType] ?? assetType;
-    const locationDisplay = location ?? 'unknown location';
-
-    // 3. Run AI analysis in parallel with building the reply message (non-blocking)
-    const aiComment = await this.aiService.analyzeAsset(imageBuffer, assetType, candidateName, region);
+    const wasAiEstimated = !!aiResult?.estimated_cost;
 
     // 4. Persist report to session
     const currentSession = this.sessionStore.get(chatId);
     const sessionReports: SessionReport[] = [
       ...(currentSession?.sessionReports ?? []),
-      { candidateName, assetType, location: locationDisplay, estimatedCost: estimated_cost, region },
+      { candidateName, assetType, location: locationDisplay, estimatedCost: estimated_cost, region: storedRegion },
     ];
+    this.sessionStore.set(chatId, { step: 'awaiting_more', sessionReports });
 
-    this.sessionStore.set(chatId, {
-      step: 'awaiting_more',
-      sessionReports,
-    });
-
-    // 5. Build reply lines
+    // 5. Build reply
     const lines: string[] = [
       `Noted! ✅ ${assetDisplay} ya ${candidateName}, ${locationDisplay}.`,
-      ``,
-      `💰 Estimated cost: ${formatKES(estimated_cost)} (${region} region)`,
+      '',
     ];
 
-    // Fun cost fact
-    lines.push(`📌 ${randomCostFact(assetType)}`);
+    if (wasAiEstimated) {
+      lines.push(`💰 AI-estimated cost: ${formatKES(estimated_cost)} (${storedRegion} region)`);
+      if (aiResult!.reasoning) {
+        lines.push(`📊 ${aiResult!.reasoning}`);
+      }
+      if (aiResult!.crowd_estimate) {
+        lines.push(`👥 Crowd estimate: ~${aiResult!.crowd_estimate.toLocaleString()} people`);
+      }
+      if (eventDate) {
+        lines.push(`📅 Rally date: ${eventDate}`);
+      }
+    } else {
+      lines.push(`💰 Estimated cost: ${formatKES(estimated_cost)} (${storedRegion} region)`);
+      lines.push(`📌 Note: AI analysis unavailable — used standard cost table.`);
+    }
 
-    // Duplicate / prior report awareness
     if (prior_count === 1) {
-      lines.push(``, `👀 Did you know? Mtu mmoja mwingine amereport ${assetDisplay.toLowerCase()} kama hii hapo awali!`);
+      lines.push('', `👀 Interesting! Mtu mmoja mwingine amereport ${assetDisplay.toLowerCase()} kama hii hapo awali!`);
     } else if (prior_count >= 2) {
-      lines.push(``, `👀 Interesting! Watu ${prior_count} wengine wamereport ${assetDisplay.toLowerCase()} kama hii — this spot is getting noticed! 🔍`);
+      lines.push('', `👀 Hot spot! Watu ${prior_count} wengine wamereport ${assetDisplay.toLowerCase()} kama hii — this location is getting noticed! 🔍`);
     }
 
-    // AI comment
-    if (aiComment) {
-      lines.push(``, `🤖 AI Observation: ${aiComment}`);
+    if (aiResult?.commentary) {
+      lines.push('', `🤖 ${aiResult.commentary}`);
     }
 
-    lines.push(``, `Asante! Una photo nyingine ya ku-report? 📸`);
+    lines.push('', `Asante! Una photo nyingine ya ku-report? 📸`);
 
     await ctx.reply(lines.join('\n'), MORE_KEYBOARD);
   }
+}
+
+// ── Lightweight region hint for AI prompt (full classification stays in backend) ──
+function deriveRegionHint(location: string): string {
+  const l = location.toLowerCase();
+  if (/cbd|upper.?hill|westlands|kilimani|parklands|city cent/i.test(l)) return 'CBD';
+  if (/nairobi|mombasa|kisumu|nakuru|eldoret|thika|kisii|kakamega|meru|nyeri|embu|kitui|machakos|bungoma|kitale|vihiga|homabay|migori|siaya|nyamira|kericho|bomet|nanyuki|malindi|garissa|isiolo|wajir|mandera|lodwar|kajiado/i.test(l)) return 'Town';
+  return 'Rural';
 }
