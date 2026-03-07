@@ -85,7 +85,6 @@ export class PhysicalAssetsService {
     const imageUrl = urlData.publicUrl;
 
     // 4. Best-effort EXIF GPS extraction
-    // Only used if location_lat/lng not explicitly provided in the request
     let locationLat: number | null = body.location_lat ? Number(body.location_lat) : null;
     let locationLng: number | null = body.location_lng ? Number(body.location_lng) : null;
 
@@ -103,21 +102,26 @@ export class PhysicalAssetsService {
       }
     }
 
-    // 5. Determine region from location string → look up estimated_cost
-    //    If the bot already ran AI cost estimation, use that value directly.
+    // 5. Determine region; use AI-provided cost if available, otherwise COST_TABLE
     const region: Region = deriveRegion(body.location?.trim());
     const estimatedCost = body.estimated_cost
       ? Math.round(Number(body.estimated_cost))
       : getEstimatedCost(assetType, region);
 
+    // 6. Parse AI analysis and confidence from the bot (if provided)
+    let aiAnalysis: object | null = null;
+    if (body.ai_analysis) {
+      try { aiAnalysis = JSON.parse(body.ai_analysis); } catch { /* malformed — ignore */ }
+    }
+    const confidenceScore = body.confidence_score ? Number(body.confidence_score) : null;
+
     this.logger.log(
-      `Asset: ${assetType}, region: ${region}, cost: KES ${estimatedCost.toLocaleString()}, candidate: ${candidate.name}`,
+      `Asset: ${assetType}, region: ${region}, cost: KES ${estimatedCost.toLocaleString()}, ` +
+      `confidence: ${confidenceScore ?? 'n/a'}, candidate: ${candidate.name}`,
     );
 
-    // 6. Insert into physical_assets — columns match the actual Supabase table schema:
-    // id, created_at (auto), candidate_id, asset_type, image_url,
-    // location_lat, location_lng, region, estimated_cost
-    const row = {
+    // 7. Insert record
+    const row: Record<string, any> = {
       candidate_id: candidate.id,
       asset_type: assetType,
       image_url: imageUrl,
@@ -125,6 +129,8 @@ export class PhysicalAssetsService {
       region,
       location_lat: locationLat ?? null,
       location_lng: locationLng ?? null,
+      ...(aiAnalysis     ? { ai_analysis: aiAnalysis }       : {}),
+      ...(confidenceScore !== null ? { confidence_score: confidenceScore } : {}),
     };
 
     const { data, error: insertError } = await this.supabaseService.client
@@ -140,7 +146,7 @@ export class PhysicalAssetsService {
       );
     }
 
-    // 7. Count prior reports for same candidate + asset_type + region (for duplicate awareness)
+    // 8. Count prior reports for same candidate + asset_type + region
     const { count: priorCountRaw } = await this.supabaseService.client
       .from('physical_assets')
       .select('id', { count: 'exact', head: true })
@@ -150,16 +156,50 @@ export class PhysicalAssetsService {
 
     const prior_count = Math.max(0, (priorCountRaw ?? 1) - 1);
 
-    // 8. Trigger reconciliation (fire-and-forget — never blocks the response)
+    // 9. Trigger reconciliation (fire-and-forget)
     await this.reconciliationService.trigger(candidate.id);
 
     return { ...data, prior_count };
   }
 
-  // ── GET /api/v1/physical/candidates ────────────────────────────────────────
-  // Lists candidates directly from the candidates table.
-  // Used by the Telegram bot for candidate disambiguation.
-  // Optional ?constituency= filter to narrow results.
+  // ── GET /api/v1/physical/prior-analyses ──────────────────────────────────
+  // Returns the last N AI analyses for the same candidate + asset_type + region.
+  // Called by the bot BEFORE running AI estimation so the AI can refine its estimate.
+  async getPriorAnalyses(
+    candidateName: string,
+    assetType: string,
+    region: string,
+    limit = 5,
+  ): Promise<any[]> {
+    // Resolve candidate id first
+    const { data: candidates } = await this.supabaseService.client
+      .from('candidates')
+      .select('id')
+      .ilike('name', `%${candidateName.trim()}%`)
+      .limit(1);
+
+    if (!candidates || candidates.length === 0) return [];
+    const candidateId = candidates[0].id;
+
+    const { data, error } = await this.supabaseService.client
+      .from('physical_assets')
+      .select('estimated_cost, confidence_score, ai_analysis, created_at')
+      .eq('candidate_id', candidateId)
+      .eq('asset_type', assetType)
+      .eq('region', region)
+      .not('ai_analysis', 'is', null)        // only records with AI analysis
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      this.logger.warn(`getPriorAnalyses error: ${error.message}`);
+      return [];
+    }
+
+    return data ?? [];
+  }
+
+  // ── GET /api/v1/physical/candidates ──────────────────────────────────────
   async getCandidates(constituency?: string): Promise<any[]> {
     let query = this.supabaseService.client
       .from('candidates')
@@ -180,7 +220,7 @@ export class PhysicalAssetsService {
     return data ?? [];
   }
 
-  // ── GET /api/v1/physical/:candidateId ──────────────────────────────────────
+  // ── GET /api/v1/physical/:candidateId ────────────────────────────────────
   async getAssets(candidateId: number): Promise<any> {
     const { data, error } = await this.supabaseService.client
       .from('physical_assets')

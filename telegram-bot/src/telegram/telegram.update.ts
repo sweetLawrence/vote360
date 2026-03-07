@@ -466,7 +466,6 @@ export class TelegramUpdate {
     }
 
     // 2. AI cost estimation — runs BEFORE upload so we can send the cost to the backend
-    //    Build a richer location string that includes clarifying answers
     let enrichedLocation = locationDisplay;
     if (clarifyingAnswer) {
       enrichedLocation = assetType === 'rally'
@@ -477,6 +476,9 @@ export class TelegramUpdate {
     // Derive region client-side for the AI prompt (backend will re-derive for storage)
     const region = deriveRegionHint(locationDisplay);
 
+    // Fetch prior analyses BEFORE calling AI — gives the model a refinement anchor
+    const priorAnalyses = await this.physicalAssetsService.getPriorAnalyses(candidateName, assetType, region);
+
     const aiResult = await this.aiService.analyzeAsset(
       imageBuffer,
       assetType,
@@ -484,6 +486,7 @@ export class TelegramUpdate {
       enrichedLocation,
       region,
       eventDate,
+      priorAnalyses,
     );
 
     // 3. Upload to backend, passing AI cost as override
@@ -497,6 +500,8 @@ export class TelegramUpdate {
         location: locationDisplay,
         uploaded_by: userId,
         estimated_cost: aiResult?.estimated_cost,
+        ai_analysis: aiResult ?? undefined,
+        confidence_score: aiResult?.confidence_score,
         event_date: eventDate,
       });
     } catch (err) {
@@ -509,6 +514,7 @@ export class TelegramUpdate {
     const { estimated_cost, region: storedRegion, prior_count } = uploadResult;
     const assetDisplay = ASSET_DISPLAY[assetType] ?? assetType;
     const wasAiEstimated = !!aiResult?.estimated_cost;
+    const wasRefined = wasAiEstimated && priorAnalyses.length > 0;
 
     // 4. Persist report to session
     const currentSession = this.sessionStore.get(chatId);
@@ -525,10 +531,14 @@ export class TelegramUpdate {
     ];
 
     if (wasAiEstimated) {
+      const confidence = aiResult!.confidence_score;
+      const confidenceLabel = confidence >= 0.8 ? '🟢 High' : confidence >= 0.6 ? '🟡 Medium' : '🔴 Low';
+      const refinedTag = wasRefined ? ` | refined from ${priorAnalyses.length} prior report(s)` : ' | first report';
+
       lines.push(`💰 AI-estimated cost: ${formatKES(estimated_cost)} (${storedRegion} region)`);
-      if (aiResult!.reasoning) {
-        lines.push(`📊 ${aiResult!.reasoning}`);
-      }
+      lines.push(`📊 ${aiResult!.reasoning}`);
+      lines.push(`🎯 Confidence: ${confidenceLabel} (${(confidence * 100).toFixed(0)}%${refinedTag})`);
+
       if (aiResult!.crowd_estimate) {
         lines.push(`👥 Crowd estimate: ~${aiResult!.crowd_estimate.toLocaleString()} people`);
       }
@@ -543,7 +553,7 @@ export class TelegramUpdate {
     if (prior_count === 1) {
       lines.push('', `👀 Interesting! Mtu mmoja mwingine amereport ${assetDisplay.toLowerCase()} kama hii hapo awali!`);
     } else if (prior_count >= 2) {
-      lines.push('', `👀 Hot spot! Watu ${prior_count} wengine wamereport ${assetDisplay.toLowerCase()} kama hii — this location is getting noticed! 🔍`);
+      lines.push('', `👀 Hot spot! Watu ${prior_count} wengine wamereport ${assetDisplay.toLowerCase()} kama hii — makadirio yanazidi kuwa sahihi! 🔍`);
     }
 
     if (aiResult?.commentary) {

@@ -6,6 +6,17 @@ import { CandidateInfo } from './session.store';
 
 export type AssetType = 'billboard' | 'rally' | 'chopper' | 'convoy';
 
+export interface PriorAnalysis {
+  estimated_cost: number;
+  confidence_score: number | null;
+  ai_analysis: {
+    reasoning?: string;
+    crowd_estimate?: number;
+    commentary?: string;
+  } | null;
+  created_at: string;
+}
+
 export interface UploadAssetParams {
   imageBuffer: Buffer;
   /** Original Telegram file name hint (e.g. "photo_123.jpg") */
@@ -17,6 +28,10 @@ export interface UploadAssetParams {
   uploaded_by: string;
   /** AI-estimated cost in KES — overrides the backend COST_TABLE if provided. */
   estimated_cost?: number;
+  /** Full AI analysis object — stored in physical_assets.ai_analysis. */
+  ai_analysis?: object;
+  /** AI confidence score 0.0–1.0. */
+  confidence_score?: number;
   /** For rallies: when did the event take place. */
   event_date?: string;
 }
@@ -33,6 +48,30 @@ export class PhysicalAssetsService {
   private readonly logger = new Logger(PhysicalAssetsService.name);
 
   constructor(private readonly configService: ConfigService) {}
+
+  /**
+   * Fetch prior AI analyses for the same candidate + asset_type + region.
+   * Called before AI estimation so the model can refine its estimate based on prior reports.
+   * Returns an empty array on error (graceful degradation — AI estimates fresh).
+   */
+  async getPriorAnalyses(
+    candidateName: string,
+    assetType: string,
+    region: string,
+  ): Promise<PriorAnalysis[]> {
+    const apiBaseUrl = this.configService.getOrThrow<string>('API_BASE_URL');
+    const params = new URLSearchParams({ candidate_name: candidateName, asset_type: assetType, region });
+    try {
+      const response = await axios.get<PriorAnalysis[]>(
+        `${apiBaseUrl}/api/v1/physical/prior-analyses?${params}`,
+        { timeout: 5000 },
+      );
+      return response.data ?? [];
+    } catch (err: any) {
+      this.logger.warn(`getPriorAnalyses failed: ${err.message}`);
+      return [];
+    }
+  }
 
   /**
    * Fetch the full candidate list from GET /api/v1/physical/candidates.
@@ -100,6 +139,12 @@ export class PhysicalAssetsService {
     }
     if (params.estimated_cost !== undefined) {
       form.append('estimated_cost', String(params.estimated_cost));
+    }
+    if (params.ai_analysis !== undefined) {
+      form.append('ai_analysis', JSON.stringify(params.ai_analysis));
+    }
+    if (params.confidence_score !== undefined) {
+      form.append('confidence_score', String(params.confidence_score));
     }
     if (params.event_date) {
       form.append('event_date', params.event_date);

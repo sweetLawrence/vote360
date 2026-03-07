@@ -13,4 +13,8 @@ export class UploadAssetDto {
   estimated_cost?: string;
   /** For rallies: approximate date/time of the event. */
   event_date?: string;
+  /** Full AI analysis JSON serialised as a string — stored in physical_assets.ai_analysis. */
+  ai_analysis?: string;
+  /** AI confidence in the estimate 0.0–1.0, serialised as a string from multipart. */
+  confidence_score?: string;
 }
